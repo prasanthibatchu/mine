@@ -1,4 +1,3 @@
-
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
@@ -81,13 +80,16 @@ function createSplashWindow(): void {
   const splashPath = resolveSplashImagePath();
   splashStartTime = Date.now();
 
-  if (splashPath) {
-    try {
-      const imageBuffer = fs.readFileSync(splashPath);
-      splashImage = `data:image/png;base64,${imageBuffer.toString('base64')}`;
-    } catch (err) {
-      console.error('Failed to read splash image file:', splashPath, err);
-    }
+   if (splashPath) {
+    fs.readFile(splashPath, (err, imageBuffer) => {
+      if (!err && splashWindow && !splashWindow.isDestroyed()) {
+        const base64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+        splashWindow.webContents.executeJavaScript(`
+          const img = document.querySelector('.splash-image');
+          if (img) img.src = '${base64}';
+        `).catch(() => {});
+      }
+    });
   }
   splashWindow = new BrowserWindow({
     // width: 400,
@@ -165,11 +167,9 @@ function createSplashWindow(): void {
   
   // Show splash immediately, don't wait for ready-to-show event
   // Use a small delay to ensure the window is fully initialized
-  setImmediate(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.show();
-    }
-  });
+// if (splashWindow && !splashWindow.isDestroyed()) {
+  splashWindow.show();
+// }
 }
         // <h2 style="margin:0 0 8px;">Checking for updates...</h2>
         // <p id="status" style="margin:0;color:#ccc;">Connecting to server...</p>
@@ -305,7 +305,7 @@ const createWindow = (): void => {
 
   // Splash stays visible until React sends app-ready signal or 10-second timeout
   mainWindow.once('ready-to-show', () => {
-    const minimumSplashTime = 5000; // 5 seconds minimum
+    const minimumSplashTime = 2000; // 5 seconds minimum
     setTimeout(() => {
       if (splashWindow && !splashWindow.isDestroyed()) {
         console.warn('React app-ready signal did not arrive within 10 seconds, forcing reveal');
@@ -323,7 +323,7 @@ const createWindow = (): void => {
 
   ipcMain.on('app-ready', () => {
     // React app is ready - enforce 5-second minimum splash display
-    const minimumSplashTime = 5000; // 5 seconds
+    const minimumSplashTime = 2000; // 5 seconds
     const elapsedTime = Date.now() - splashStartTime;
     const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
 
@@ -365,20 +365,25 @@ function showMainWindowAfterSplash(): void {
 }
 app.disableHardwareAcceleration();
 app.whenReady().then(() => {
+  // FIRST: Show splash immediately (blocking the visual delay)
   createSplashWindow();
 
+  // THEN: Do update check only if packaged (non-blocking)
   if (app.isPackaged) {
     autoUpdater.setFeedURL({
       provider: 'generic',
       url: 'http://10.200.10.11/PTAPP'
     });
-    autoUpdater.checkForUpdates();
+    // Check updates in the background — don't block splash display
+    autoUpdater.checkForUpdates().catch(() => {
+      initialCheckFinished = true;
+    });
   } else {
     initialCheckFinished = true;
-    createWindow();
-    // Keep the splash visible until the renderer is ready to show.
-    // mainWindow.once('ready-to-show') will close the splash and show the main window.
   }
+
+  // Create main window after splash (it stays hidden)
+  createWindow();
 
   ipcMain.handle('get-mac-address', async () => {
     try {
@@ -499,6 +504,3 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
-
-So the issue is a startup timing/boot sequence problem, not a crash.
-here problem with startuptiming /boost at that time not display ygt image spash window show after 5 sconds why
