@@ -24,6 +24,7 @@ let updateAvailable = false;
 let isUpdating = false;
 let initialCheckFinished = false;
 let splashStartTime = 0;
+
 function resolveSplashImagePath(): string | null {
   const dirs = [
     path.join(app.getAppPath(), 'src', 'assets'),
@@ -75,6 +76,7 @@ function resolveSplashImagePath(): string | null {
   console.error('Splash image path does not exist. Tried exact files and these directories:', exactCandidates, dirs);
   return null;
 }
+
 function createSplashWindow(): void {
   let splashImage = '';
   const splashPath = resolveSplashImagePath();
@@ -85,6 +87,7 @@ function createSplashWindow(): void {
     try {
       const imageBuffer = fs.readFileSync(splashPath);
       splashImage = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+      console.log('Splash image loaded successfully');
     } catch (err) {
       console.error('Failed to read splash image file:', splashPath, err);
     }
@@ -147,11 +150,10 @@ function createSplashWindow(): void {
   splashWindow.loadURL(`data:text/html;base64,${Buffer.from(splashHTML).toString('base64')}`);
   splashWindow.show(); // Show immediately
 }
-        // <h2 style="margin:0 0 8px;">Checking for updates...</h2>
-        // <p id="status" style="margin:0;color:#ccc;">Connecting to server...</p>
-        // <div class="progress-container"><div id="bar" class="progress-bar"></div></div>
+
 app.disableHardwareAcceleration();
 let isInitialBoot = true;
+
 const createWindow = (): void => {
   mainWindow = new BrowserWindow({
     fullscreen: true,
@@ -257,7 +259,8 @@ const createWindow = (): void => {
 
     mainWindow.webContents.executeJavaScript(cssInjectionScript).catch(() => { });
   });
- if (!app.isPackaged && typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined' && MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+
+  if (!app.isPackaged && typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined' && MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
     let productionFilePath = path.join(app.getAppPath(), '.vite/build/renderer/main_window/index.html');
@@ -279,39 +282,11 @@ const createWindow = (): void => {
     });
   }
 
-  // Splash stays visible until React sends app-ready signal or 10-second timeout
-  mainWindow.once('ready-to-show', () => {
-    const minimumSplashTime = 2000; // 5 seconds minimum
-    setTimeout(() => {
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        console.warn('React app-ready signal did not arrive within 10 seconds, forcing reveal');
-        showMainWindowAfterSplash();
-      }
-    }, minimumSplashTime + 5000); // Total 10 seconds
-  });
-
   ipcMain.on('request-fullscreen', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isFullScreen()) {
       win.setFullScreen(true);
     }
-  });
-
-  ipcMain.on('app-ready', () => {
-    // React app is ready - enforce 5-second minimum splash display
-    const minimumSplashTime = 2000; // 5 seconds
-    const elapsedTime = Date.now() - splashStartTime;
-    const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
-
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show();
-      }
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.close();
-      }
-      isInitialBoot = false;
-    }, remainingTime);
   });
 
   mainWindow.on('focus', () => {
@@ -324,28 +299,27 @@ const createWindow = (): void => {
     if (mainWindow) mainWindow.setFullScreen(true);
   });
 };
+
 // Helper function to safely bring the main window forward and close the updater splash
 function revealWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show(); // 1. Unhides your main app window directly into your rotated layout
+    mainWindow.show();
   }
   if (splashWindow && !splashWindow.isDestroyed()) {
-    splashWindow.close(); // 2. Permanently destroys the initial loading splash window
+    splashWindow.close();
   }
+  isInitialBoot = false;
 }
 
 function showMainWindowAfterSplash(): void {
-  // Reveal immediately when called - splash stays visible until React is ready
   revealWindow();
-  isInitialBoot = false;
 }
-app.disableHardwareAcceleration();
-app.disableHardwareAcceleration();
+
 app.whenReady().then(() => {
-  // FIRST: Show splash immediately
+  // STEP 1: Show splash immediately with image
   createSplashWindow();
 
-  // THEN: Do update check only if packaged (non-blocking)
+  // STEP 2: Do update check only if packaged (non-blocking)
   if (app.isPackaged) {
     autoUpdater.setFeedURL({
       provider: 'generic',
@@ -358,40 +332,31 @@ app.whenReady().then(() => {
     initialCheckFinished = true;
   }
 
-  // Create main window IMMEDIATELY (stays hidden until React is ready)
+  // STEP 3: Create main window (stays hidden)
   createWindow();
 
-  // CRITICAL FIX: Fallback timeout - show app even if React never signals
-  // This prevents blank screen if React doesn't send app-ready
-  const appReadyTimeout = setTimeout(() => {
-    console.warn('App-ready signal timeout - forcing app display');
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      mainWindow.show();
-    }
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.close();
-    }
-    isInitialBoot = false;
-  }, 8000); // 8 second fallback
-
-  // Clear the fallback timeout if React DOES signal ready
+  // STEP 4: Set up app-ready handler
   ipcMain.on('app-ready', () => {
-    clearTimeout(appReadyTimeout);
-    
-    const minimumSplashTime = 2000;
+    // React app is ready - show with minimum 5-second splash display
+    const minimumSplashTime = 5000; // 5 seconds
     const elapsedTime = Date.now() - splashStartTime;
     const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
 
+    console.log(`App ready received. Elapsed: ${elapsedTime}ms, Remaining splash: ${remainingTime}ms`);
+
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show();
-      }
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.close();
-      }
-      isInitialBoot = false;
+      showMainWindowAfterSplash();
     }, remainingTime);
   });
+
+  // STEP 5: Fallback timeout - guarantee app shows even if React never signals
+  // This prevents permanent blank screen (shows app after 5 seconds minimum)
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.warn('Fallback: React app-ready signal not received within 5 seconds, forcing reveal');
+      showMainWindowAfterSplash();
+    }
+  }, 5000);
 
   ipcMain.handle('get-mac-address', async () => {
     try {
