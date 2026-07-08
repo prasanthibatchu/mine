@@ -81,13 +81,11 @@ function createSplashWindow(): void {
   let splashImage = '';
   const splashPath = resolveSplashImagePath();
   splashStartTime = Date.now();
-
-  // Read image SYNCHRONOUSLY before creating window
-  if (splashPath) {
-    try {
-      const imageBuffer = fs.readFileSync(splashPath);
-      splashImage = `data:image/png;base64,${imageBuffer.toString('base64')}`;
-      console.log('Splash image loaded successfully');
+if (splashPath) {
+  try {
+    const imageBuffer = fs.readFileSync(splashPath);
+    splashImage = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+    console.log('Splash image loaded successfully');
     } catch (err) {
       console.error('Failed to read splash image file:', splashPath, err);
     }
@@ -336,28 +334,22 @@ app.whenReady().then(() => {
   createWindow();
 
   // STEP 4: Set up app-ready handler
-  ipcMain.on('app-ready', () => {
-    // React app is ready - show with minimum 5-second splash display
-    const minimumSplashTime = 5000; // 5 seconds
-    const elapsedTime = Date.now() - splashStartTime;
-    const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
+ ipcMain.on('app-ready', () => {
+  const minimumSplashTime = 5000; // 5 seconds
+  const elapsedTime = Date.now() - splashStartTime;
+  const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
 
-    console.log(`App ready received. Elapsed: ${elapsedTime}ms, Remaining splash: ${remainingTime}ms`);
-
-    setTimeout(() => {
-      showMainWindowAfterSplash();
-    }, remainingTime);
-  });
-
-  // STEP 5: Fallback timeout - guarantee app shows even if React never signals
-  // This prevents permanent blank screen (shows app after 5 seconds minimum)
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      console.warn('Fallback: React app-ready signal not received within 5 seconds, forcing reveal');
-      showMainWindowAfterSplash();
-    }
-  }, 5000);
+    showMainWindowAfterSplash();
+  }, remainingTime);
+});
 
+setTimeout(() => {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+    console.warn('Fallback: React app-ready signal not received within 5 seconds...');
+    showMainWindowAfterSplash();
+  }
+}, 5000);
   ipcMain.handle('get-mac-address', async () => {
     try {
       const macAddress = await getMAC();
