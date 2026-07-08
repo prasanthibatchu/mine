@@ -80,20 +80,17 @@ function createSplashWindow(): void {
   const splashPath = resolveSplashImagePath();
   splashStartTime = Date.now();
 
-   if (splashPath) {
-    fs.readFile(splashPath, (err, imageBuffer) => {
-      if (!err && splashWindow && !splashWindow.isDestroyed()) {
-        const base64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
-        splashWindow.webContents.executeJavaScript(`
-          const img = document.querySelector('.splash-image');
-          if (img) img.src = '${base64}';
-        `).catch(() => {});
-      }
-    });
+  // Read image SYNCHRONOUSLY before creating window
+  if (splashPath) {
+    try {
+      const imageBuffer = fs.readFileSync(splashPath);
+      splashImage = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+    } catch (err) {
+      console.error('Failed to read splash image file:', splashPath, err);
+    }
   }
+
   splashWindow = new BrowserWindow({
-    // width: 400,
-    // height: 300,
     fullscreen: true,
     backgroundColor: "#000",
     frame: false,
@@ -126,29 +123,13 @@ function createSplashWindow(): void {
         max-width: 420px;
         text-align: center;
         transform: rotate(90deg) !important;
-            transform-origin: center center !important;
+        transform-origin: center center !important;
       }
       .splash-image {
         width: 180px;
         height: auto;
         margin: 0 auto 30px;
         display: block;
-         
-      }
-      .progress-container {
-        width: 100%;
-        background: #7f8c8d;
-        height: 10px;
-        border-radius: 5px;
-        margin: 20px auto 0;
-        overflow: hidden;
-      }
-      .progress-bar {
-        width: 0%;
-        height: 100%;
-        background: #2ecc71;
-        border-radius: 5px;
-        transition: width 0.2s ease;
       }
       .loading-text {
         margin-top: 18px;
@@ -164,12 +145,7 @@ function createSplashWindow(): void {
     </body></html>`;
 
   splashWindow.loadURL(`data:text/html;base64,${Buffer.from(splashHTML).toString('base64')}`);
-  
-  // Show splash immediately, don't wait for ready-to-show event
-  // Use a small delay to ensure the window is fully initialized
-// if (splashWindow && !splashWindow.isDestroyed()) {
-  splashWindow.show();
-// }
+  splashWindow.show(); // Show immediately
 }
         // <h2 style="margin:0 0 8px;">Checking for updates...</h2>
         // <p id="status" style="margin:0;color:#ccc;">Connecting to server...</p>
@@ -364,8 +340,9 @@ function showMainWindowAfterSplash(): void {
   isInitialBoot = false;
 }
 app.disableHardwareAcceleration();
+app.disableHardwareAcceleration();
 app.whenReady().then(() => {
-  // FIRST: Show splash immediately (blocking the visual delay)
+  // FIRST: Show splash immediately
   createSplashWindow();
 
   // THEN: Do update check only if packaged (non-blocking)
@@ -374,7 +351,6 @@ app.whenReady().then(() => {
       provider: 'generic',
       url: 'http://10.200.10.11/PTAPP'
     });
-    // Check updates in the background — don't block splash display
     autoUpdater.checkForUpdates().catch(() => {
       initialCheckFinished = true;
     });
@@ -382,8 +358,40 @@ app.whenReady().then(() => {
     initialCheckFinished = true;
   }
 
-  // Create main window after splash (it stays hidden)
+  // Create main window IMMEDIATELY (stays hidden until React is ready)
   createWindow();
+
+  // CRITICAL FIX: Fallback timeout - show app even if React never signals
+  // This prevents blank screen if React doesn't send app-ready
+  const appReadyTimeout = setTimeout(() => {
+    console.warn('App-ready signal timeout - forcing app display');
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+    }
+    isInitialBoot = false;
+  }, 8000); // 8 second fallback
+
+  // Clear the fallback timeout if React DOES signal ready
+  ipcMain.on('app-ready', () => {
+    clearTimeout(appReadyTimeout);
+    
+    const minimumSplashTime = 2000;
+    const elapsedTime = Date.now() - splashStartTime;
+    const remainingTime = Math.max(0, minimumSplashTime - elapsedTime);
+
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+      }
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.close();
+      }
+      isInitialBoot = false;
+    }, remainingTime);
+  });
 
   ipcMain.handle('get-mac-address', async () => {
     try {
